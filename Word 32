@@ -1,0 +1,109 @@
+public class Word32 {
+	
+	private Bit[] Bits = new Bit[32];
+    public Word32() {
+    	for(int i=0;i<32;i++) {
+    		Bits[i] = new Bit(false);
+    	}
+    }
+
+    public Word32(Bit[] in) {
+    	for(int i=0;i<32;i++) {
+    		Bits[i] = new Bit(false);
+    		Bits[i].assign(in[i].getValue());
+    	}
+    }
+
+    public void getTopHalf(Word16 result) { // sets result = bits 0-15 of this word. use bit.assign
+    	for(int i=0;i<16;i++) {
+    		result.bits[i].assign(this.Bits[i].getValue());
+    	}
+    }
+
+    public void getBottomHalf(Word16 result) { // sets result = bits 16-31 of this word. use bit.assign
+    	for(int i=0;i<16;i++) {	
+    		result.bits[i].assign(this.Bits[i+16].getValue());    		
+    	}
+    }
+
+    public void copy(Word32 result) { // sets result's bit to be the same as this. use bit.assign
+    	for(int i=0;i<32;i++) {
+    		result.Bits[i].assign(this.Bits[i].getValue());
+    	}
+    }
+
+    public boolean equals(Word32 other) {
+    	for(int i=0;i<32;i++) {
+    		  if(Bits[i].getValue() != other.Bits[i].getValue()) 			
+    		     return false;
+    		      }
+    		    	return true;
+    }
+
+    public static boolean equals(Word32 a, Word32 b) {
+        return a.equals(b);
+    }
+
+    public void getBitN(int n, Bit result) {// use bit.assign
+    	if(Bits[n].getValue()) {
+        	result.assign(true);
+        }else {
+        	result.assign(false);
+        }
+    }
+
+    public void setBitN(int n, Bit source) { //  use bit.assign
+    	Bits[n].assign(source.getValue());
+    }
+
+    public void and(Word32 other, Word32 result) {
+    	and(this,other,result);
+    }
+
+    public static void and(Word32 a, Word32 b, Word32 result) {
+    	for(int i=0;i<32;i++) {
+    		Bit.and(a.Bits[i], b.Bits[i], result.Bits[i]);
+    	}
+    }
+
+    public void or(Word32 other, Word32 result) {
+    	or(this,other,result);
+    }
+
+    public static void or(Word32 a, Word32 b, Word32 result) {
+    	for(int i=0; i<32; i++) {
+    	Bit.or(a.Bits[i], b.Bits[i], result.Bits[i]);
+    	}
+    }
+
+    public void xor(Word32 other, Word32 result) {
+    	xor(this,other,result);
+    }
+
+    public static void xor(Word32 a, Word32 b, Word32 result) {
+    	for(int i=0; i<32; i++) {
+        	Bit.xor(a.Bits[i], b.Bits[i], result.Bits[i]);
+        	}
+    }
+
+    public void not( Word32 result) {
+    	not(this,result);
+    }
+
+    public static void not(Word32 a, Word32 result) {
+    	for(int i=0;i<32;i++) {
+    		Bit.not(a.Bits[i],result.Bits[i]);
+    	}
+    }
+
+    public String toString() {
+        StringBuilder sb = new StringBuilder();
+        
+        for (Bit bit : Bits) {
+            sb.append(bit.toString());
+            sb.append(",");
+        }
+         
+        return sb.toString();
+    }
+}
