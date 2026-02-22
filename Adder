@@ -1,0 +1,42 @@
+public class Adder {
+
+    public static void subtract(Word32 a, Word32 b, Word32 result) {
+
+        Word32 notB = new Word32();
+        Word32 one = new Word32();
+        Word32 temp = new Word32();
+
+        b.not(notB);
+        one.setBitN(31, new Bit(true));
+        add(notB, one, temp);
+        add(a, temp, result);
+    }
+
+    public static void add(Word32 a, Word32 b, Word32 result) {
+
+
+        Bit abit = new Bit(false);
+        Bit bbit = new Bit(false);
+        Bit aAndb = new Bit(false);
+        Bit axb = new Bit(false);
+        Bit sum = new Bit(false);
+        Bit carry = new Bit(false);
+        Bit carryAndAxb = new Bit(false);
+        Bit newCarry = new Bit(false);
+
+        for(int i =31; i>=0; i--) {
+            a.getBitN(i, abit);
+            b.getBitN(i, bbit);
+
+            Bit.xor(abit, bbit, axb);
+            Bit.xor(axb, carry, sum);
+            result.setBitN(i, sum);
+
+            Bit.and(abit, bbit, aAndb);
+            Bit.and(carry, axb, carryAndAxb);
+            Bit.or(aAndb, carryAndAxb, newCarry);
+            carry.assign(newCarry.getValue());
+        }
+
+    }
+}
