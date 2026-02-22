@@ -1,36 +1,66 @@
 public class Multiplier {
     public static void multiply(Word32 a, Word32 b, Word32 result) {
 
+        // 1️⃣ Clear result
         for (int i = 0; i < 32; i++) {
             result.setBitN(i, new Bit(false));
-          }
-          Word32 multiplicand = new Word32();
-          Word32 multiplier = new Word32();
-          Word32 shifted = new Word32();
+        }
 
-          for (int i = 0; i < 32; i++) {
-              Bit temp = new Bit(false);
+        // 2️⃣ Make copies of inputs
+        Word32 multiplicand = new Word32();
+        Word32 multiplier = new Word32();
 
-              a.getBitN(i, temp);
-              multiplicand.setBitN(i, new Bit(temp.getValue()));
-              b.getBitN(i, temp);
-              multiplier.setBitN(i, new Bit(temp.getValue()));
-          }
-       for (int step = 0; step < 32; step++) {
-       Bit lsb = new Bit(false);
-       multiplier.getBitN(31, lsb);
-       if (lsb.getValue()) {
-           Word32 tempSum = new Word32();
-           Adder.add(result, multiplicand, tempSum);
-    for (int i = 0; i < 32; i++) {
-        Bit temp = new Bit(false);
-        tempSum.getBitN(i, temp);
-        result.setBitN(i, new Bit(temp.getValue()));
-    }
-       }
+        for (int i = 0; i < 32; i++) {
+            Bit temp = new Bit(false);
 
-           Shifter.RightShift(multiplier, 1, shifted);
-           Shifter.LeftShift(multiplicand, 1, multiplicand);
-       }
+            a.getBitN(i, temp);
+            multiplicand.setBitN(i, new Bit(temp.getValue()));
+
+            b.getBitN(i, temp);
+            multiplier.setBitN(i, new Bit(temp.getValue()));
+        }
+
+        // 3️⃣ Shift-and-add algorithm
+        for (int step = 0; step < 32; step++) {
+
+            // Check LSB (index 31 in your layout)
+            Bit lsb = new Bit(false);
+            multiplier.getBitN(31, lsb);
+
+            if (lsb.getValue()) {
+
+                Word32 tempSum = new Word32();
+                Adder.add(result, multiplicand, tempSum);
+
+                // Copy tempSum into result
+                for (int i = 0; i < 32; i++) {
+                    Bit temp = new Bit(false);
+                    tempSum.getBitN(i, temp);
+                    result.setBitN(i, new Bit(temp.getValue()));
+                }
+            }
+
+            // 🚨 SHIFT SAFELY (NO IN-PLACE SHIFTING)
+
+            // Shift multiplier right
+            Word32 shiftedMultiplier = new Word32();
+            Shifter.RightShift(multiplier, 1, shiftedMultiplier);
+
+            for (int i = 0; i < 32; i++) {
+                Bit temp = new Bit(false);
+                shiftedMultiplier.getBitN(i, temp);
+                multiplier.setBitN(i, new Bit(temp.getValue()));
+            }
+
+            // Shift multiplicand left
+            Word32 shiftedMultiplicand = new Word32();
+            Shifter.LeftShift(multiplicand, 1, shiftedMultiplicand);
+
+            for (int i = 0; i < 32; i++) {
+                Bit temp = new Bit(false);
+                shiftedMultiplicand.getBitN(i, temp);
+                multiplicand.setBitN(i, new Bit(temp.getValue()));
+            }
+        }
     }
 }
