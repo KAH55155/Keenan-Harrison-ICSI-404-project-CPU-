@@ -1,0 +1,28 @@
+public class Shifter {
+    public static void LeftShift(Word32 source, int amount, Word32 result) {
+
+        for(int i=0; i<32; i++){
+            result.setBitN(i, new Bit(false));
+        }
+
+        for(int i =amount; i<32; i++){
+            Bit temp = new Bit(false);
+            source.getBitN(i, temp);
+            result.setBitN(i - amount, temp);
+        }
+    }
+
+    public static void RightShift(Word32 source, int amount, Word32 result) {
+
+        for(int i =0; i<32; i++){
+            result.setBitN(i, new Bit(false));
+        }
+
+        for(int i =0; i<32 - amount; i++){
+            Bit temp = new Bit(false);
+            source.getBitN(i, temp);
+            result.setBitN(i + amount, new Bit(temp.getValue()));
+        }
+
+    }
+}
