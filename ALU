@@ -1,14 +1,11 @@
 public class ALU {
+
     public Word16 instruction = new Word16();
     public Word32 op1 = new Word32();
     public Word32 op2 = new Word32();
     public Word32 result = new Word32();
     public Bit less = new Bit(false);
     public Bit equal = new Bit(false);
-
-    private int smallInt(Word32 w){
-        return TestConverter.toInt(w);
-    }
 
     public void doInstruction() {
 
@@ -17,7 +14,7 @@ public class ALU {
         switch(opcode){
 
             case 1: // ADD
-                Adder.add(op1,op2,result);
+                Adder.add(op1, op2, result);
                 break;
 
             case 2: // AND
@@ -25,23 +22,23 @@ public class ALU {
                 break;
 
             case 3: // MULTIPLY
-                Multiplier.multiply(op1,op2,result);
+                Multiplier.multiply(op1, op2, result);
                 break;
 
             case 4: // LEFT SHIFT
-                int shiftLeft = smallInt(op2);
-                Shifter.LeftShift(op1,shiftLeft,result);
+                int shiftLeft = getShiftAmount(op2);
+                Shifter.LeftShift(op1, shiftLeft, result);
                 break;
 
             case 5: // SUBTRACT
-                Word32 negative = new Word32();
-                op2.not(negative);
+                Word32 neg = new Word32();
+                op2.not(neg);
 
                 Word32 one = new Word32();
                 TestConverter.fromInt(1, one);
 
-                Adder.add(negative, one, negative);
-                Adder.add(op1,negative,result);
+                Adder.add(neg, one, neg);
+                Adder.add(op1, neg, result);
                 break;
 
             case 6: // OR
@@ -49,11 +46,11 @@ public class ALU {
                 break;
 
             case 7: // RIGHT SHIFT
-                int shiftRight = smallInt(op2);
+                int shiftRight = getShiftAmount(op2);
                 Shifter.RightShift(op1, shiftRight, result);
                 break;
 
-            case 11: // COMPARE
+            case 8: // COMPARE
                 compare();
                 break;
         }
@@ -62,17 +59,39 @@ public class ALU {
     private int getOpcode() {
 
         int opcode = 0;
+        int power = 16;
+
         Bit b = new Bit(false);
 
-        for(int i =0; i < 5; i++){
-            instruction.getBitN(i,b);
+        for(int i = 0; i < 5; i++){
+            instruction.getBitN(i, b);
+            if(b.getValue()){
+                opcode += power;
+            }
+            power = power / 2;
+        }
+        return opcode;
+    }
+
+    private int getShiftAmount(Word32 w){
+
+        int value = 0;
+        int power = 16;
+
+        Bit b = new Bit(false);
+
+        for(int i = 27; i < 32; i++){
+
+            w.getBitN(i, b);
 
             if(b.getValue()){
-                opcode += (1 << (4 - i));
+                value += power;
             }
+
+            power = power / 2;
         }
 
-        return opcode;
+        return value;
     }
 
     private void compare(){
@@ -92,9 +111,11 @@ public class ALU {
         Adder.add(op1, neg, diff);
 
         boolean isZero = true;
+
         Bit temp = new Bit(false);
 
-        for(int i =0; i<32; i++){
+        for(int i = 0; i < 32; i++){
+
             diff.getBitN(i, temp);
 
             if(temp.getValue()){
