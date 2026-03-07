@@ -1,0 +1,117 @@
+public class ALU {
+    public Word16 instruction = new Word16();
+    public Word32 op1 = new Word32();
+    public Word32 op2 = new Word32();
+    public Word32 result = new Word32();
+    public Bit less = new Bit(false);
+    public Bit equal = new Bit(false);
+
+    private int smallInt(Word32 w){
+        return TestConverter.toInt(w);
+    }
+
+    public void doInstruction() {
+
+        int opcode = getOpcode();
+
+        switch(opcode){
+
+            case 1: // ADD
+                Adder.add(op1,op2,result);
+                break;
+
+            case 2: // AND
+                op1.and(op2, result);
+                break;
+
+            case 3: // MULTIPLY
+                Multiplier.multiply(op1,op2,result);
+                break;
+
+            case 4: // LEFT SHIFT
+                int shiftLeft = smallInt(op2);
+                Shifter.LeftShift(op1,shiftLeft,result);
+                break;
+
+            case 5: // SUBTRACT
+                Word32 negative = new Word32();
+                op2.not(negative);
+
+                Word32 one = new Word32();
+                TestConverter.fromInt(1, one);
+
+                Adder.add(negative, one, negative);
+                Adder.add(op1,negative,result);
+                break;
+
+            case 6: // OR
+                op1.or(op2, result);
+                break;
+
+            case 7: // RIGHT SHIFT
+                int shiftRight = smallInt(op2);
+                Shifter.RightShift(op1, shiftRight, result);
+                break;
+
+            case 11: // COMPARE
+                compare();
+                break;
+        }
+    }
+
+    private int getOpcode() {
+
+        int opcode = 0;
+        Bit b = new Bit(false);
+
+        for(int i =0; i < 5; i++){
+            instruction.getBitN(i,b);
+
+            if(b.getValue()){
+                opcode += (1 << (4 - i));
+            }
+        }
+
+        return opcode;
+    }
+
+    private void compare(){
+
+        equal.assign(false);
+        less.assign(false);
+
+        Word32 diff = new Word32();
+        Word32 neg = new Word32();
+
+        op2.not(neg);
+
+        Word32 one = new Word32();
+        TestConverter.fromInt(1, one);
+
+        Adder.add(neg, one, neg);
+        Adder.add(op1, neg, diff);
+
+        boolean isZero = true;
+        Bit temp = new Bit(false);
+
+        for(int i =0; i<32; i++){
+            diff.getBitN(i, temp);
+
+            if(temp.getValue()){
+                isZero = false;
+                break;
+            }
+        }
+
+        if(isZero){
+            equal.assign(true);
+        }
+
+        Bit sign = new Bit(false);
+        diff.getBitN(0, sign);
+
+        if(sign.getValue()){
+            less.assign(true);
+        }
+    }
+}
