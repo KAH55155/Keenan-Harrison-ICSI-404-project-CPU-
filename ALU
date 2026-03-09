@@ -9,28 +9,26 @@ public class ALU {
 
     public void doInstruction() {
 
-        int opcode = getOpcode();
+        switch(getOpcode()){//SIA 2026 order
 
-        switch(opcode){
-
-            case 1: // ADD
+            case 1:
                 Adder.add(op1, op2, result);
                 break;
 
-            case 2: // AND
+            case 2:
                 op1.and(op2, result);
                 break;
 
-            case 3: // MULTIPLY
+            case 3:
                 Multiplier.multiply(op1, op2, result);
                 break;
 
-            case 4: // LEFT SHIFT
+            case 4:
                 int shiftLeft = getShiftAmount(op2);
                 Shifter.LeftShift(op1, shiftLeft, result);
                 break;
 
-            case 5: // SUBTRACT
+            case 5:
                 Word32 neg = new Word32();
                 op2.not(neg);
 
@@ -41,16 +39,16 @@ public class ALU {
                 Adder.add(op1, neg, result);
                 break;
 
-            case 6: // OR
+            case 6:
                 op1.or(op2, result);
                 break;
 
-            case 7: // RIGHT SHIFT
+            case 7:
                 int shiftRight = getShiftAmount(op2);
                 Shifter.RightShift(op1, shiftRight, result);
                 break;
 
-            case 8: // COMPARE
+            case 11:
                 compare();
                 break;
         }
@@ -59,38 +57,32 @@ public class ALU {
     private int getOpcode() {
 
         int opcode = 0;
-        int power = 16;
-
-        Bit b = new Bit(false);
+        Bit bit = new Bit(false);
+        int[] values = {16, 8, 4, 2, 1};
 
         for(int i = 0; i < 5; i++){
-            instruction.getBitN(i, b);
-            if(b.getValue()){
-                opcode += power;
+            instruction.getBitN(i, bit);//Reads i bits in instruction, stores true/false value in bit
+            if(bit.getValue()){
+                opcode += values[i];//if the bit is 1 add the value of i
             }
-            power = power / 2;
         }
         return opcode;
     }
 
-    private int getShiftAmount(Word32 w){
+    private int getShiftAmount(Word32 word){
 
         int value = 0;
-        int power = 16;
-
-        Bit b = new Bit(false);
+        Bit bit = new Bit(false);
+        int[] values = {16, 8, 4, 2, 1};
+        int index = 0;
 
         for(int i = 27; i < 32; i++){
-
-            w.getBitN(i, b);
-
-            if(b.getValue()){
-                value += power;
+            word.getBitN(i, bit);
+            if(bit.getValue()){
+                value += values[index];
             }
-
-            power = power / 2;
+            index++;
         }
-
         return value;
     }
 
@@ -99,39 +91,33 @@ public class ALU {
         equal.assign(false);
         less.assign(false);
 
-        Word32 diff = new Word32();
-        Word32 neg = new Word32();
+        Word32 difference = new Word32();
+        Word32 negative = new Word32();
 
-        op2.not(neg);
+        op2.not(negative);
 
         Word32 one = new Word32();
         TestConverter.fromInt(1, one);
 
-        Adder.add(neg, one, neg);
-        Adder.add(op1, neg, diff);
+        Adder.add(negative, one, negative);
+        Adder.add(op1, negative, difference);
 
         boolean isZero = true;
-
         Bit temp = new Bit(false);
 
         for(int i = 0; i < 32; i++){
-
-            diff.getBitN(i, temp);
-
-            if(temp.getValue()){
+            difference.getBitN(i, temp);//reads bit i from difference
+            if(temp.getValue()){//if a 1 is found result isn't 0
                 isZero = false;
                 break;
             }
         }
-
         if(isZero){
             equal.assign(true);
         }
-
         Bit sign = new Bit(false);
-        diff.getBitN(0, sign);
-
-        if(sign.getValue()){
+        difference.getBitN(0, sign);
+        if(sign.getValue()){//if the result is negative set the less flag
             less.assign(true);
         }
     }
