@@ -1,0 +1,273 @@
+import java.util.LinkedList;
+import java.util.List;
+import java.util.Stack;
+
+public class Processor {
+
+    private Memory mem;
+    public List<String> output = new LinkedList<>();
+
+    private Word32 PC = new Word32();
+    private Word32 currentInstruction = new Word32();
+    private Word16 instruction = new Word16();
+
+    private Word32[] registers = new Word32[32];
+
+    private ALU alu = new ALU();
+
+    private Stack<Word32> stack = new Stack<>();
+
+    private boolean halted = false;
+    private boolean useTop = true;
+
+    private int opcode;
+    private int destReg;
+    private int srcReg;
+    private int immediate;
+
+    public Processor(Memory m) {
+        mem = m;
+
+        for(int i = 0; i < 32; i++){
+            registers[i] = new Word32();
+        }
+    }
+
+    public void run() {
+        while(!halted){
+            fetch();
+            decode();
+            execute();
+            store();
+        }
+    }
+
+    // ================= FETCH =================
+    private void fetch() {
+
+        if(useTop){
+            PC.copy(mem.address);
+            mem.read();
+            mem.value.copy(currentInstruction);
+            currentInstruction.getTopHalf(instruction);
+        } else {
+            currentInstruction.getBottomHalf(instruction);
+
+            Word32 one = new Word32();
+            TestConverter.fromInt(1, one);
+            Adder.add(PC, one, PC);
+        }
+
+        useTop = !useTop;
+    }
+
+    // ================= DECODE =================
+    private void decode() {
+
+        Bit temp = new Bit(false);
+
+        opcode = 0;
+        int[] values = {16, 8, 4, 2, 1};
+
+        for(int i = 0; i < 5; i++){
+            instruction.getBitN(i, temp);
+            if(temp.getValue()){
+                opcode += values[i];
+            }
+        }
+
+        srcReg = 0;
+        destReg = 0;
+        immediate = 0;
+
+        // ================= CALL + BRANCH =================
+        if(opcode == 9 || (opcode >= 12 && opcode <= 17)){
+
+            int power = 1;
+            for(int i = 15; i >= 5; i--){
+                instruction.getBitN(i, temp);
+                if(temp.getValue()){
+                    immediate += power;
+                }
+                power *= 2;
+            }
+
+            if(immediate >= 1024){
+                immediate -= 2048;
+            }
+
+            loadInstructionToALU();
+            return;
+        }
+
+        Bit format = new Bit(false);
+        instruction.getBitN(5, format);
+
+        if(!format.getValue()){
+
+            for(int i = 6; i <= 10; i++){
+                instruction.getBitN(i, temp);
+                if(temp.getValue()){
+                    srcReg += (1 << (10 - i));
+                }
+            }
+
+            for(int i = 11; i <= 15; i++){
+                instruction.getBitN(i, temp);
+                if(temp.getValue()){
+                    destReg += (1 << (15 - i));
+                }
+            }
+
+            registers[destReg].copy(alu.op1);
+            registers[srcReg].copy(alu.op2);
+        }
+
+        else {
+
+            for(int i = 6; i <= 10; i++){
+                instruction.getBitN(i, temp);
+                if(temp.getValue()){
+                    immediate += (1 << (10 - i));
+                }
+            }
+
+            if(immediate >= 16){
+                immediate -= 32;
+            }
+
+            for(int i = 11; i <= 15; i++){
+                instruction.getBitN(i, temp);
+                if(temp.getValue()){
+                    destReg += (1 << (15 - i));
+                }
+            }
+
+            Word32 immWord = new Word32();
+            TestConverter.fromInt(immediate, immWord);
+
+            registers[destReg].copy(alu.op1);
+            immWord.copy(alu.op2);
+        }
+
+        loadInstructionToALU();
+    }
+
+    // 🔥 FIX: Correctly load opcode bits into ALU
+    private void loadInstructionToALU(){
+        Bit temp = new Bit(false);
+
+        for(int i = 0; i < 16; i++){
+            instruction.getBitN(i, temp);
+            alu.instruction.setBitN(i, new Bit(temp.getValue()));
+        }
+    }
+
+    // ================= EXECUTE =================
+    private void execute() {
+
+        if(opcode == 0){
+            halted = true;
+            return;
+        }
+
+        alu.doInstruction();
+    }
+
+    // ================= STORE =================
+    private void store() {
+
+        if(opcode == 8){
+            if(immediate == 0){
+                printReg();
+            } else if(immediate == 1){
+                printMem();
+            }
+            return;
+        }
+
+        if(opcode >= 1 && opcode <= 7){
+            registers[destReg].copy(alu.result);
+            return;
+        }
+
+        if(opcode == 20){
+            registers[destReg].copy(registers[srcReg]);
+            return;
+        }
+
+        if(opcode == 18){
+            registers[destReg].copy(mem.address);
+            mem.read();
+            mem.value.copy(registers[destReg]);
+            return;
+        }
+
+        if(opcode == 19){
+            registers[destReg].copy(mem.address);
+            registers[srcReg].copy(mem.value);
+            mem.write();
+            return;
+        }
+
+        if(opcode >= 12 && opcode <= 17){
+
+            boolean take = false;
+
+            switch(opcode){
+                case 12: take = alu.less.getValue() || alu.equal.getValue(); break;
+                case 13: take = alu.less.getValue(); break;
+                case 14: take = !alu.less.getValue() || alu.equal.getValue(); break;
+                case 15: take = !alu.less.getValue() && !alu.equal.getValue(); break;
+                case 16: take = alu.equal.getValue(); break;
+                case 17: take = !alu.equal.getValue(); break;
+            }
+
+            if(take){
+                Word32 offset = new Word32();
+                TestConverter.fromInt(immediate, offset);
+                Adder.add(PC, offset, PC);
+            }
+            return;
+        }
+
+        if(opcode == 9){
+            Word32 ret = new Word32();
+            PC.copy(ret);
+            stack.push(ret);
+
+            Word32 offset = new Word32();
+            TestConverter.fromInt(immediate, offset);
+            Adder.add(PC, offset, PC);
+            return;
+        }
+
+        if(opcode == 10){
+            stack.pop().copy(PC);
+        }
+    }
+
+    private void printReg() {
+        for (int i = 0; i < 32; i++) {
+            var line = "r"+ i + ":" + registers[i];
+            output.add(line);
+            System.out.println(line);
+        }
+    }
+
+    private void printMem() {
+        for (int i = 0; i < 1000; i++) {
+            Word32 addr = new Word32();
+            TestConverter.fromInt(i, addr);
+            addr.copy(mem.address);
+            mem.read();
+
+            Word32 value = new Word32();
+            mem.value.copy(value);
+
+            var line = i + ":" + value + "(" + TestConverter.toInt(value) + ")";
+            output.add(line);
+            System.out.println(line);
+        }
+    }
+}
