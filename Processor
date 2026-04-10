@@ -12,13 +12,10 @@ public class Processor {
     private Word16 instruction = new Word16();
 
     private Word32[] registers = new Word32[32];
-
     private ALU alu = new ALU();
-
     private Stack<Word32> stack = new Stack<>();
 
     private boolean halted = false;
-    private boolean useTop = true;
 
     private int opcode;
     private int destReg;
@@ -27,7 +24,6 @@ public class Processor {
 
     public Processor(Memory m) {
         mem = m;
-
         for(int i = 0; i < 32; i++){
             registers[i] = new Word32();
         }
@@ -42,167 +38,125 @@ public class Processor {
         }
     }
 
-    // ================= FETCH =================
     private void fetch() {
+        int currentPC = TestConverter.toInt(PC);
+        int wordIndex = currentPC / 2;
+        boolean useTop = (currentPC % 2 == 0);
+
+        // Update memory address and read
+        TestConverter.fromInt(wordIndex, mem.address);
+        mem.read();
+        mem.value.copy(currentInstruction);
 
         if(useTop){
-            PC.copy(mem.address);
-            mem.read();
-            mem.value.copy(currentInstruction);
             currentInstruction.getTopHalf(instruction);
         } else {
             currentInstruction.getBottomHalf(instruction);
-
-            Word32 one = new Word32();
-            TestConverter.fromInt(1, one);
-            Adder.add(PC, one, PC);
         }
 
-        useTop = !useTop;
+        // Increment PC by 1 instruction
+        Word32 one = new Word32();
+        TestConverter.fromInt(1, one);
+        Adder.add(PC, one, PC);
     }
 
-    // ================= DECODE =================
     private void decode() {
-
         Bit temp = new Bit(false);
-
         opcode = 0;
         int[] values = {16, 8, 4, 2, 1};
 
         for(int i = 0; i < 5; i++){
             instruction.getBitN(i, temp);
-            if(temp.getValue()){
-                opcode += values[i];
-            }
+            if(temp.getValue()) opcode += values[i];
         }
 
-        srcReg = 0;
-        destReg = 0;
-        immediate = 0;
+        srcReg = 0; destReg = 0; immediate = 0;
 
-        // ================= CALL + BRANCH =================
+        // Decode Immediate for Branch/Call (11 bits)
         if(opcode == 9 || (opcode >= 12 && opcode <= 17)){
-
             int power = 1;
             for(int i = 15; i >= 5; i--){
                 instruction.getBitN(i, temp);
-                if(temp.getValue()){
-                    immediate += power;
-                }
+                if(temp.getValue()) immediate += power;
                 power *= 2;
             }
-
-            if(immediate >= 1024){
-                immediate -= 2048;
-            }
-
-            loadInstructionToALU();
-            return;
+            if(immediate >= 1024) immediate -= 2048;
         }
-
-        Bit format = new Bit(false);
-        instruction.getBitN(5, format);
-
-        if(!format.getValue()){
-
-            for(int i = 6; i <= 10; i++){
-                instruction.getBitN(i, temp);
-                if(temp.getValue()){
-                    srcReg += (1 << (10 - i));
-                }
-            }
-
-            for(int i = 11; i <= 15; i++){
-                instruction.getBitN(i, temp);
-                if(temp.getValue()){
-                    destReg += (1 << (15 - i));
-                }
-            }
-
-            registers[destReg].copy(alu.op1);
-            registers[srcReg].copy(alu.op2);
-        }
-
         else {
+            instruction.getBitN(5, temp); // Format bit
+            boolean isImmediate = temp.getValue();
 
+            // Source/Immediate (5 bits)
             for(int i = 6; i <= 10; i++){
                 instruction.getBitN(i, temp);
-                if(temp.getValue()){
-                    immediate += (1 << (10 - i));
-                }
+                if(temp.getValue()) srcReg += (1 << (10 - i));
             }
 
-            if(immediate >= 16){
-                immediate -= 32;
+            if(isImmediate) {
+                immediate = srcReg;
+                if(immediate >= 16) immediate -= 32;
+                Word32 immWord = new Word32();
+                TestConverter.fromInt(immediate, immWord);
+                immWord.copy(alu.op2);
+            } else {
+                registers[srcReg].copy(alu.op2);
             }
 
+            // Destination (5 bits)
             for(int i = 11; i <= 15; i++){
                 instruction.getBitN(i, temp);
-                if(temp.getValue()){
-                    destReg += (1 << (15 - i));
-                }
+                if(temp.getValue()) destReg += (1 << (15 - i));
             }
-
-            Word32 immWord = new Word32();
-            TestConverter.fromInt(immediate, immWord);
-
             registers[destReg].copy(alu.op1);
-            immWord.copy(alu.op2);
         }
-
         loadInstructionToALU();
     }
 
-    // 🔥 FIX: Correctly load opcode bits into ALU
     private void loadInstructionToALU(){
         Bit temp = new Bit(false);
-
         for(int i = 0; i < 16; i++){
             instruction.getBitN(i, temp);
             alu.instruction.setBitN(i, new Bit(temp.getValue()));
         }
     }
 
-    // ================= EXECUTE =================
     private void execute() {
-
-        if(opcode == 0){
-            halted = true;
-            return;
-        }
-
+        if(opcode == 0) { halted = true; return; }
         alu.doInstruction();
     }
 
-    // ================= STORE =================
     private void store() {
+        if(halted) return;
 
+        // Syscalls
         if(opcode == 8){
-            if(immediate == 0){
-                printReg();
-            } else if(immediate == 1){
-                printMem();
-            }
+            if(immediate == 0) printReg();
+            else if(immediate == 1) printMem();
             return;
         }
 
+        // Standard ALU Ops
         if(opcode >= 1 && opcode <= 7){
             registers[destReg].copy(alu.result);
             return;
         }
 
+        // Copy
         if(opcode == 20){
-            registers[destReg].copy(registers[srcReg]);
+            registers[srcReg].copy(registers[destReg]);
             return;
         }
 
+        // Load (Mem -> Reg)
         if(opcode == 18){
-            registers[destReg].copy(mem.address);
+            // Use ALU result or register as address
+            registers[srcReg].copy(mem.address);
             mem.read();
             mem.value.copy(registers[destReg]);
             return;
         }
 
+        // Store (Reg -> Mem)
         if(opcode == 19){
             registers[destReg].copy(mem.address);
             registers[srcReg].copy(mem.value);
@@ -210,10 +164,9 @@ public class Processor {
             return;
         }
 
+        // Branching
         if(opcode >= 12 && opcode <= 17){
-
             boolean take = false;
-
             switch(opcode){
                 case 12: take = alu.less.getValue() || alu.equal.getValue(); break;
                 case 13: take = alu.less.getValue(); break;
@@ -225,25 +178,26 @@ public class Processor {
 
             if(take){
                 Word32 offset = new Word32();
-                TestConverter.fromInt(immediate, offset);
+                TestConverter.fromInt(immediate - 1, offset); // -1 because fetch already incremented
                 Adder.add(PC, offset, PC);
             }
             return;
         }
 
+        // Call
         if(opcode == 9){
             Word32 ret = new Word32();
             PC.copy(ret);
             stack.push(ret);
-
             Word32 offset = new Word32();
-            TestConverter.fromInt(immediate, offset);
+            TestConverter.fromInt(immediate - 1, offset);
             Adder.add(PC, offset, PC);
             return;
         }
 
+        // Return
         if(opcode == 10){
-            stack.pop().copy(PC);
+            if(!stack.isEmpty()) stack.pop().copy(PC);
         }
     }
 
@@ -251,7 +205,6 @@ public class Processor {
         for (int i = 0; i < 32; i++) {
             var line = "r"+ i + ":" + registers[i];
             output.add(line);
-            System.out.println(line);
         }
     }
 
@@ -261,13 +214,8 @@ public class Processor {
             TestConverter.fromInt(i, addr);
             addr.copy(mem.address);
             mem.read();
-
-            Word32 value = new Word32();
-            mem.value.copy(value);
-
-            var line = i + ":" + value + "(" + TestConverter.toInt(value) + ")";
+            var line = i + ":" + mem.value + "(" + TestConverter.toInt(mem.value) + ")";
             output.add(line);
-            System.out.println(line);
         }
     }
 }
