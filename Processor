@@ -41,7 +41,6 @@ public class Processor {
     private void fetch() {
         int currentPC = TestConverter.toInt(PC);
 
-        // Map Instruction PC to Memory Word Index (2 instructions per word)
         TestConverter.fromInt(currentPC / 2, mem.address);
         mem.read();
         mem.value.copy(currentInstruction);
@@ -52,7 +51,6 @@ public class Processor {
             currentInstruction.getBottomHalf(instruction);
         }
 
-        // Move PC to next instruction immediately
         Word32 one = new Word32();
         TestConverter.fromInt(1, one);
         Adder.add(PC, one, PC);
@@ -68,7 +66,7 @@ public class Processor {
             if(temp.getValue()) opcode += values[i];
         }
 
-        // 11-bit immediate for Branch/Call
+        // immediate / branch
         if(opcode == 9 || (opcode >= 12 && opcode <= 17)){
             int power = 1;
             for(int i = 15; i >= 5; i--){
@@ -76,19 +74,18 @@ public class Processor {
                 if(temp.getValue()) immediate += power;
                 power *= 2;
             }
+
             if(immediate >= 1024) immediate -= 2048;
         }
         else {
             instruction.getBitN(5, temp);
             boolean isImmediate = temp.getValue();
 
-            // Bits 6-10: Source/Immediate
             for(int i = 6; i <= 10; i++){
                 instruction.getBitN(i, temp);
                 if(temp.getValue()) srcReg += (1 << (10 - i));
             }
 
-            // Bits 11-15: Destination
             for(int i = 11; i <= 15; i++){
                 instruction.getBitN(i, temp);
                 if(temp.getValue()) destReg += (1 << (15 - i));
@@ -101,8 +98,10 @@ public class Processor {
             } else {
                 registers[srcReg].copy(alu.op2);
             }
+
             registers[destReg].copy(alu.op1);
         }
+
         loadInstructionToALU();
     }
 
@@ -116,8 +115,8 @@ public class Processor {
 
     private void execute() {
         if(opcode == 0) { halted = true; return; }
-        // Only trigger ALU if it's a math/logic/compare op
-        if(opcode >= 1 && opcode <= 7 || opcode == 11) {
+
+        if((opcode >= 1 && opcode <= 7) || opcode == 11) {
             alu.doInstruction();
         }
     }
@@ -126,27 +125,28 @@ public class Processor {
         if(halted) return;
 
         switch(opcode) {
+
             case 1: case 2: case 3: case 4: case 5: case 6: case 7:
                 alu.result.copy(registers[destReg]);
                 break;
 
-            case 8: // Syscall
+            case 8:
                 if(immediate == 0) printReg();
                 else if(immediate == 1) printMem();
                 break;
 
-            case 11: // Compare (Updates flags in ALU, nothing to store in regs)
+            case 11:
                 break;
 
-            case 18: // Load
+            case 18:
                 Word32 loadOff = new Word32();
                 TestConverter.fromInt(immediate, loadOff);
-                Adder.add(registers[srcReg], loadOff, mem.address);
+                Adder.add(registers[destReg], loadOff, mem.address);
                 mem.read();
                 mem.value.copy(registers[destReg]);
                 break;
 
-            case 19: // Store
+            case 19:
                 Word32 storeOff = new Word32();
                 TestConverter.fromInt(immediate, storeOff);
                 Adder.add(registers[destReg], storeOff, mem.address);
@@ -154,38 +154,39 @@ public class Processor {
                 mem.write();
                 break;
 
-            case 20: // Copy
-                registers[srcReg].copy(registers[destReg]);
+            case 20:
+                registers[destReg].copy(registers[srcReg]);
                 break;
 
-            case 9: // Call
-                Word32 retAddr = new Word32();
-                PC.copy(retAddr);
-                stack.push(retAddr);
-                // Fall through to jump logic
+            case 9:
+                Word32 ret = new Word32();
+                PC.copy(ret);
+                stack.push(ret);
+
             case 12: case 13: case 14: case 15: case 16: case 17:
                 if(shouldBranch()) {
-                    Word32 jumpOffset = new Word32();
-                    // Correcting for pre-fetch increment
-                    TestConverter.fromInt(immediate - 1, jumpOffset);
-                    Adder.add(PC, jumpOffset, PC);
+                    Word32 offset = new Word32();
+                    TestConverter.fromInt(immediate, offset);
+                    Adder.add(PC, offset, PC);
                 }
                 break;
 
-            case 10: // Return
+            case 10:
                 if(!stack.isEmpty()) stack.pop().copy(PC);
                 break;
         }
     }
 
     private boolean shouldBranch() {
-        if(opcode == 9) return true; // Call always jumps
+        if(opcode == 9) return true;
+
         boolean less = alu.less.getValue();
         boolean equal = alu.equal.getValue();
+
         switch(opcode) {
             case 12: return less || equal;
             case 13: return less;
-            case 14: return !less || equal;
+            case 14: return !less;
             case 15: return !less && !equal;
             case 16: return equal;
             case 17: return !equal;
