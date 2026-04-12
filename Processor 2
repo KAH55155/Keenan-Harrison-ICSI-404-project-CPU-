@@ -3,35 +3,26 @@ import java.util.List;
 import java.util.Stack;
 
 public class Processor {
-
     private Memory mem;
     public List<String> output = new LinkedList<>();
-
     private Word32 PC = new Word32();
-    private Word32 currentInstruction = new Word32();
+    private Word32 currentInstructionWord = new Word32();
     private Word16 instruction = new Word16();
-
     private Word32[] registers = new Word32[32];
     private ALU alu = new ALU();
-    private Stack<Word32> stack = new Stack<>();
-
+    private Stack<Word32> callStack = new Stack<>();
     private boolean halted = false;
 
-    private int opcode;
-    private int destReg;
-    private int srcReg;
-    private int immediate;
-    private boolean isImmediate; // Corrected: Moved to field to resolve syntax error
+    private int opcode, destReg, srcReg, immediate;
+    private boolean isImmediate;
 
     public Processor(Memory m) {
         this.mem = m;
-        for(int i = 0; i < 32; i++){
-            registers[i] = new Word32();
-        }
+        for(int i = 0; i < 32; i++) registers[i] = new Word32();
     }
 
     public void run() {
-        while(!halted){
+        while(!halted) {
             fetch();
             decode();
             execute();
@@ -41,16 +32,12 @@ public class Processor {
 
     private void fetch() {
         int currentPC = TestConverter.toInt(PC);
-
         TestConverter.fromInt(currentPC / 2, mem.address);
         mem.read();
-        mem.value.copy(currentInstruction);
+        mem.value.copy(currentInstructionWord);
 
-        if(currentPC % 2 == 0){
-            currentInstruction.getTopHalf(instruction);
-        } else {
-            currentInstruction.getBottomHalf(instruction);
-        }
+        if(currentPC % 2 == 0) currentInstructionWord.getTopHalf(instruction);
+        else currentInstructionWord.getBottomHalf(instruction);
 
         Word32 one = new Word32();
         TestConverter.fromInt(1, one);
@@ -62,54 +49,52 @@ public class Processor {
         opcode = 0; destReg = 0; srcReg = 0; immediate = 0;
         int[] values = {16, 8, 4, 2, 1};
 
-        for(int i = 0; i < 5; i++){
+        for(int i = 0; i < 5; i++) {
             instruction.getBitN(i, temp);
             if(temp.getValue()) opcode += values[i];
         }
 
-        // Corrected: 11-bit immediate format check (Syscall, Call, Branches)
-        if(opcode == 8 || opcode == 9 || (opcode >= 12 && opcode <= 17)){
+        // 11-bit immediate (Syscall, Call, Branch)
+        if(opcode == 8 || opcode == 9 || (opcode >= 12 && opcode <= 17)) {
             isImmediate = true;
             int power = 1;
-            for(int i = 15; i >= 5; i--){
+            for(int i = 15; i >= 5; i--) {
                 instruction.getBitN(i, temp);
                 if(temp.getValue()) immediate += power;
                 power *= 2;
             }
-
             if(immediate >= 1024) immediate -= 2048;
-        }
-        else {
+        } else {
             instruction.getBitN(5, temp);
-            isImmediate = temp.getValue(); // Corrected: Uses class field
-
-            for(int i = 6; i <= 10; i++){
+            isImmediate = temp.getValue();
+            // srcReg bits (6-10)
+            for(int i = 6; i <= 10; i++) {
                 instruction.getBitN(i, temp);
                 if(temp.getValue()) srcReg += (1 << (10 - i));
             }
-
-            for(int i = 11; i <= 15; i++){
+            // destReg bits (11-15)
+            for(int i = 11; i <= 15; i++) {
                 instruction.getBitN(i, temp);
                 if(temp.getValue()) destReg += (1 << (15 - i));
             }
-
             if(isImmediate) {
-                immediate = srcReg;
+                immediate = srcReg; // The 5 bits are in the srcReg slot
                 if(immediate >= 16) immediate -= 32;
-                TestConverter.fromInt(immediate, alu.op2);
-            } else {
-                registers[srcReg].copy(alu.op2);
+                srcReg = 0; // Clear it so we don't use it as an index
             }
-
-            registers[destReg].copy(alu.op1);
         }
+
+        // Setup ALU
+        registers[destReg].copy(alu.op1);
+        if(isImmediate) TestConverter.fromInt(immediate, alu.op2);
+        else registers[srcReg].copy(alu.op2);
 
         loadInstructionToALU();
     }
 
-    private void loadInstructionToALU(){
+    private void loadInstructionToALU() {
         Bit temp = new Bit(false);
-        for(int i = 0; i < 16; i++){
+        for(int i = 0; i < 16; i++) {
             instruction.getBitN(i, temp);
             alu.instruction.setBitN(i, new Bit(temp.getValue()));
         }
@@ -117,97 +102,68 @@ public class Processor {
 
     private void execute() {
         if(opcode == 0) { halted = true; return; }
-
-        if((opcode >= 1 && opcode <= 7) || opcode == 11) {
-            alu.doInstruction();
-        }
+        if((opcode >= 1 && opcode <= 7) || opcode == 11) alu.doInstruction();
     }
 
     private void store() {
         if(halted) return;
-
         switch(opcode) {
-
             case 1: case 2: case 3: case 4: case 5: case 6: case 7:
                 alu.result.copy(registers[destReg]);
                 break;
-
             case 8: // Syscall
                 if(immediate == 0) printReg();
                 else if(immediate == 1) printMem();
                 break;
-
-            case 11: // Compare
-                break;
-
-            case 18: // Load - Corrected Addressing
-                if (isImmediate) {
-                    Word32 loadOff = new Word32();
-                    TestConverter.fromInt(immediate, loadOff);
-                    Adder.add(registers[destReg], loadOff, mem.address);
-                } else {
-                    registers[srcReg].copy(mem.address);
-                }
+            case 18: // Load
+                int lAddr = TestConverter.toInt(registers[destReg]) + immediate;
+                TestConverter.fromInt(lAddr, mem.address);
                 mem.read();
                 mem.value.copy(registers[destReg]);
                 break;
-
-            case 19: // Store - Corrected Addressing
-                registers[destReg].copy(mem.address);
+            case 19: // Store
+                TestConverter.fromInt(TestConverter.toInt(registers[destReg]) + immediate, mem.address);
                 registers[srcReg].copy(mem.value);
                 mem.write();
                 break;
-
-            case 20: // Copy - Corrected: Handles Immediate values (literal 1s, 10s, etc)
-                if (isImmediate) {
-                    TestConverter.fromInt(immediate, registers[destReg]);
-                } else {
-                    registers[srcReg].copy(registers[destReg]);
-                }
+            case 20: // Copy
+                if(isImmediate) TestConverter.fromInt(immediate, registers[destReg]);
+                else registers[srcReg].copy(registers[destReg]);
                 break;
-
             case 9: // Call
                 Word32 ret = new Word32();
                 PC.copy(ret);
-                stack.push(ret);
-                // Fall through to relative jump logic
-
+                callStack.push(ret);
             case 12: case 13: case 14: case 15: case 16: case 17:
                 if(shouldBranch()) {
                     Word32 offset = new Word32();
-                    // Corrected: Subtract 1 because fetch() already advanced the PC
-                    TestConverter.fromInt(immediate - 1, offset);
+                    TestConverter.fromInt(immediate, offset); // Switched from immediate - 1
                     Adder.add(PC, offset, PC);
                 }
                 break;
-
             case 10: // Return
-                if(!stack.isEmpty()) stack.pop().copy(PC);
+                if(!callStack.isEmpty()) callStack.pop().copy(PC);
                 break;
         }
     }
 
     private boolean shouldBranch() {
         if(opcode == 9) return true;
-
         boolean less = alu.less.getValue();
         boolean equal = alu.equal.getValue();
-
         switch(opcode) {
-            case 12: return less || equal; // BLE
-            case 13: return less;          // BLT
-            case 14: return !less;         // BGE
-            case 15: return !less && !equal; // BGT
-            case 16: return equal;         // BEQ
-            case 17: return !equal;        // BNE
+            case 12: return less || equal;
+            case 13: return less;
+            case 14: return !less;
+            case 15: return !less && !equal;
+            case 16: return equal;
+            case 17: return !equal;
             default: return false;
         }
     }
 
     private void printReg() {
-        for (int i = 0; i < 32; i++) {
-            output.add("r" + i + ":" + registers[i].toString());
-        }
+        for (int i = 0; i < 32; i++) output.add("r" + i + ":" + registers[i].toString());
     }
 
     private void printMem() {
