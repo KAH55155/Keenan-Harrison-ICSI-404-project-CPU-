@@ -113,6 +113,10 @@ public class Processor {
 
     private void store() {
         if(halted) return;
+        System.out.println("PC=" + (TestConverter.toInt(PC)-1) +
+                " op=" + opcode + " dest=" + destReg +
+                " src=" + srcReg + " imm=" + immediate +
+                " isImm=" + isImmediate);
         switch(opcode) {
             case 1: case 2: case 3: case 4: case 5: case 6: case 7:
                 alu.result.copy(registers[destReg]);
@@ -159,11 +163,17 @@ public class Processor {
 
     private void setMemAddress() {
         if (isImmediate) {
-            Word32 imm = new Word32();
-            TestConverter.fromInt(immediate, imm);
-            Adder.add(imm, registers[destReg], mem.address);
+            if (opcode == 19) {
+                // store: address is just destReg, immediate is the value
+                registers[destReg].copy(mem.address);
+            } else {
+                // load: address is imm + destReg
+                Word32 imm = new Word32();
+                TestConverter.fromInt(immediate, imm);
+                Adder.add(imm, registers[destReg], mem.address);
+            }
         } else {
-            registers[srcReg].copy(mem.address);
+            registers[destReg].copy(mem.address);
         }
     }
 
