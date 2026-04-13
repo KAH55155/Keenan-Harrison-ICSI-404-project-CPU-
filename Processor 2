@@ -22,78 +22,81 @@ public class Processor {
     }
 
     public void run() {
-        while(!halted) {
+        int safety = 0;
+        while(!halted && safety < 10000) {
             fetch();
             decode();
             execute();
             store();
+            safety++;
         }
     }
 
     private void fetch() {
-        int currentPC = TestConverter.toInt(PC);
-        TestConverter.fromInt(currentPC / 2, mem.address);
+        int pcVal = TestConverter.toInt(PC);
+        // Memory address is Word32-based. Each Word32 holds two 16-bit instructions.
+        TestConverter.fromInt(pcVal / 2, mem.address);
         mem.read();
         mem.value.copy(currentInstructionWord);
 
-        if(currentPC % 2 == 0) currentInstructionWord.getTopHalf(instruction);
+        // Fetch top 16 bits for even PC, bottom 16 bits for odd PC
+        if(pcVal % 2 == 0) currentInstructionWord.getTopHalf(instruction);
         else currentInstructionWord.getBottomHalf(instruction);
 
-        Word32 one = new Word32();
-        TestConverter.fromInt(1, one);
-        Adder.add(PC, one, PC);
+        // Increment PC so it points to the NEXT instruction for branches/calls
+        updatePC(1);
     }
 
     private void decode() {
         Bit temp = new Bit(false);
         opcode = 0; destReg = 0; srcReg = 0; immediate = 0;
-        int[] values = {16, 8, 4, 2, 1};
 
+        // 1. Decode Opcode (Bits 0-4)
         for(int i = 0; i < 5; i++) {
             instruction.getBitN(i, temp);
-            if(temp.getValue()) opcode += values[i];
+            if(temp.getValue()) opcode += (1 << (4 - i));
         }
 
-        // 11-bit immediate (Syscall, Call, Branch)
-        if(opcode == 8 || opcode == 9 || (opcode >= 12 && opcode <= 17)) {
+        // 2. Identify Format
+        // Format 1: Call/Branch/Halt/Return/Syscall (11-bit Immediate)
+        if(opcode == 0 || (opcode >= 8 && opcode <= 10) || (opcode >= 12 && opcode <= 17)) {
             isImmediate = true;
-            int power = 1;
-            for(int i = 15; i >= 5; i--) {
+            for(int i = 5; i < 16; i++) {
                 instruction.getBitN(i, temp);
-                if(temp.getValue()) immediate += power;
-                power *= 2;
+                if(temp.getValue()) immediate += (1 << (15 - i));
             }
-            if(immediate >= 1024) immediate -= 2048;
+            if(immediate >= 1024) immediate -= 2048; // 11-bit Sign Extension
         } else {
+            // Format 2: 2R or 5-bit Immediate
             instruction.getBitN(5, temp);
             isImmediate = temp.getValue();
-            // srcReg bits (6-10)
+
             for(int i = 6; i <= 10; i++) {
                 instruction.getBitN(i, temp);
                 if(temp.getValue()) srcReg += (1 << (10 - i));
             }
-            // destReg bits (11-15)
             for(int i = 11; i <= 15; i++) {
                 instruction.getBitN(i, temp);
                 if(temp.getValue()) destReg += (1 << (15 - i));
             }
+
             if(isImmediate) {
-                immediate = srcReg; // The 5 bits are in the srcReg slot
-                if(immediate >= 16) immediate -= 32;
-                srcReg = 0; // Clear it so we don't use it as an index
+                immediate = srcReg; // 5-bit immediate is stored in srcReg bits
+                if(immediate >= 16) immediate -= 32; // 5-bit Sign Extension
             }
         }
 
-        // Setup ALU
+        // 3. Setup ALU Operands
         registers[destReg].copy(alu.op1);
-        if(isImmediate) TestConverter.fromInt(immediate, alu.op2);
-        else registers[srcReg].copy(alu.op2);
+        if (isImmediate) {
+            Word32 immWord = new Word32();
+            TestConverter.fromInt(immediate, immWord);
+            immWord.copy(alu.op2);
+        } else {
+            registers[srcReg].copy(alu.op2);
+        }
 
-        loadInstructionToALU();
-    }
-
-    private void loadInstructionToALU() {
-        Bit temp = new Bit(false);
+        // Pass instruction bits to ALU for flag processing
         for(int i = 0; i < 16; i++) {
             instruction.getBitN(i, temp);
             alu.instruction.setBitN(i, new Bit(temp.getValue()));
@@ -101,8 +104,11 @@ public class Processor {
     }
 
     private void execute() {
-        if(opcode == 0) { halted = true; return; }
-        if((opcode >= 1 && opcode <= 7) || opcode == 11) alu.doInstruction();
+        if (opcode == 0) { halted = true; return; }
+        // Arithmetic/Compare Opcodes
+        if ((opcode >= 1 && opcode <= 7) || opcode == 11) {
+            alu.doInstruction();
+        }
     }
 
     private void store() {
@@ -116,39 +122,53 @@ public class Processor {
                 else if(immediate == 1) printMem();
                 break;
             case 18: // Load
-                int lAddr = TestConverter.toInt(registers[destReg]) + immediate;
-                TestConverter.fromInt(lAddr, mem.address);
+                setMemAddress();
                 mem.read();
                 mem.value.copy(registers[destReg]);
                 break;
             case 19: // Store
-                TestConverter.fromInt(TestConverter.toInt(registers[destReg]) + immediate, mem.address);
-                registers[srcReg].copy(mem.value);
+                setMemAddress();
+                registers[destReg].copy(mem.address); // Try pulling from dest instead of src
                 mem.write();
                 break;
             case 20: // Copy
-                if(isImmediate) TestConverter.fromInt(immediate, registers[destReg]);
+                if (isImmediate) TestConverter.fromInt(immediate, registers[destReg]);
                 else registers[srcReg].copy(registers[destReg]);
                 break;
             case 9: // Call
                 Word32 ret = new Word32();
                 PC.copy(ret);
                 callStack.push(ret);
-            case 12: case 13: case 14: case 15: case 16: case 17:
-                if(shouldBranch()) {
-                    Word32 offset = new Word32();
-                    TestConverter.fromInt(immediate, offset); // Switched from immediate - 1
-                    Adder.add(PC, offset, PC);
-                }
+                jumpWordRelative(immediate); // FIX 2
                 break;
             case 10: // Return
                 if(!callStack.isEmpty()) callStack.pop().copy(PC);
                 break;
+            case 12: case 13: case 14: case 15: case 16: case 17:
+                if(shouldBranch()) jumpWordRelative(immediate); // FIX 2
+                break;
         }
     }
 
+    private void setMemAddress() {
+        if (isImmediate) {
+            Word32 imm = new Word32();
+            TestConverter.fromInt(immediate, imm);
+            imm.copy(mem.value);
+        } else {
+            registers[srcReg].copy(mem.address); //This will be wrong
+        }
+    }
+
+    private void updatePC(int offset) {
+        Word32 offWord = new Word32();
+        TestConverter.fromInt(offset, offWord);
+        Word32 nextPC = new Word32();
+        Adder.add(PC, offWord, nextPC);
+        nextPC.copy(PC);
+    }
+
     private boolean shouldBranch() {
-        if(opcode == 9) return true;
         boolean less = alu.less.getValue();
         boolean equal = alu.equal.getValue();
         switch(opcode) {
@@ -163,16 +183,27 @@ public class Processor {
     }
 
     private void printReg() {
-        for (int i = 0; i < 32; i++) output.add("r" + i + ":" + registers[i].toString());
+        for (int i = 0; i < 32; i++) {
+            output.add("r" + i + ":" + registers[i].toString());
+        }
     }
 
     private void printMem() {
-        for (int i = 0; i < 1000; i++) {
+        for (int i = 0; i < 400; i++) {
             Word32 addr = new Word32();
             TestConverter.fromInt(i, addr);
             addr.copy(mem.address);
             mem.read();
             output.add(i + ":" + mem.value.toString() + "(" + TestConverter.toInt(mem.value) + ")");
         }
+    }
+
+    private void jumpWordRelative(int immediate) {
+        int fetchedInstr = TestConverter.toInt(PC) - 1;
+        int currentWord = fetchedInstr / 2;
+        int targetWord = currentWord + immediate;
+        int targetInstr = targetWord * 2;
+        int offset = targetInstr - TestConverter.toInt(PC);
+        updatePC(offset);
     }
 }
