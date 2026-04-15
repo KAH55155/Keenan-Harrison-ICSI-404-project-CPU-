@@ -132,13 +132,15 @@ public class Processor {
     }
 
     private void printMem() {
-        for (int i = 0; i < 400; i++) {
+        for (int i = 0; i < 1000; i++) {
             Word32 addr = new Word32();
-            TestConverter.fromInt(i, addr);
+            Word32 value = new Word32();
             // Convert i to Word32 here...
+            TestConverter.fromInt(i,addr);
             addr.copy(mem.address);
             mem.read();
-            var line = i + ":" + mem.value.toString() + "(" + TestConverter.toInt(mem.value) + ")";
+            mem.value.copy(value);
+            var line = i + ":" + value + "(" + TestConverter.toInt(value) + ")";
             output.add(line);
             System.out.println(line);
         }
