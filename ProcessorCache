@@ -1,0 +1,297 @@
+import java.util.LinkedList;
+import java.util.List;
+import java.util.Stack;
+
+public class Processor {
+    private Memory mem;
+    public List<String> output = new LinkedList<>();
+    private Word32 PC = new Word32();
+    private Word32 currentInstructionWord = new Word32();
+    private Word16 instruction = new Word16();
+    private Word32[] registers = new Word32[32];
+    private ALU alu = new ALU();
+    private Stack<Word32> callStack = new Stack<>();
+    private boolean halted = false;
+    private int opcode, DestinationRegister, SourceRegister, immediate;
+    private boolean isImmediate;
+
+    // Clock cycle counter - tracks total cycles used by the program
+    private long currentClockCycle = 0;
+
+    // Cache instances
+    private InstructionCache instructionCache;
+    private L2Cache l2Cache;
+
+    public Processor(Memory m) {
+        this.mem = m;
+        for (int i = 0; i < 32; i++) {
+            registers[i] = new Word32();
+        }
+        // Wire caches together: L1 -> L2 -> Memory
+        l2Cache = new L2Cache(m);
+        instructionCache = new InstructionCache(l2Cache);
+    }
+
+    public void run() {
+        int safety = 0;
+        while (!halted && safety < 10000) {
+            fetch();
+            decode();
+            execute();
+            store();
+            safety++;
+        }
+        // Print final clock cycle count
+        String cycleReport = "Total clock cycles: " + currentClockCycle;
+        output.add(cycleReport);
+        System.out.println(cycleReport);
+    }
+
+    private void fetch() {
+        int programCounterValue = TestConverter.toInt(PC);
+        int wordAddress = programCounterValue / 2;
+
+        // Read through instruction cache; it updates currentClockCycle
+        Word32 fetched = new Word32();
+        currentClockCycle += instructionCache.read(wordAddress, fetched);
+        fetched.copy(currentInstructionWord);
+
+        if (programCounterValue % 2 == 0) {
+            currentInstructionWord.getTopHalf(instruction);
+        } else {
+            currentInstructionWord.getBottomHalf(instruction);
+        }
+        updatePC(1);
+    }
+
+    private void decode() {
+        Bit temp = new Bit(false);
+        opcode = 0;
+        DestinationRegister = 0;
+        SourceRegister = 0;
+        immediate = 0;
+
+        for (int i = 0; i < 5; i++) {
+            instruction.getBitN(i, temp);
+            if (temp.getValue()) {
+                opcode += (1 << (4 - i));
+            }
+        }
+
+        if (opcode == 0 || (opcode >= 8 && opcode <= 10) || (opcode >= 12 && opcode <= 17)) {
+            isImmediate = true;
+            for (int i = 5; i < 16; i++) {
+                instruction.getBitN(i, temp);
+                if (temp.getValue()) {
+                    immediate += (1 << (15 - i));
+                }
+            }
+            if (immediate >= 1024) {
+                immediate -= 2048;
+            }
+        } else {
+            instruction.getBitN(5, temp);
+            isImmediate = temp.getValue();
+
+            for (int i = 6; i <= 10; i++) {
+                instruction.getBitN(i, temp);
+                if (temp.getValue()) {
+                    SourceRegister += (1 << (10 - i));
+                }
+            }
+            for (int i = 11; i <= 15; i++) {
+                instruction.getBitN(i, temp);
+                if (temp.getValue()) {
+                    DestinationRegister += (1 << (15 - i));
+                }
+            }
+            if (isImmediate) {
+                immediate = SourceRegister;
+                if (immediate >= 16) {
+                    immediate -= 32;
+                }
+            }
+        }
+
+        registers[DestinationRegister].copy(alu.op1);
+        if (isImmediate) {
+            Word32 immediateWord = new Word32();
+            TestConverter.fromInt(immediate, immediateWord);
+            immediateWord.copy(alu.op2);
+        } else {
+            registers[SourceRegister].copy(alu.op2);
+        }
+
+        for (int i = 0; i < 16; i++) {
+            instruction.getBitN(i, temp);
+            alu.instruction.setBitN(i, new Bit(temp.getValue()));
+        }
+    }
+
+    private void execute() {
+        if (opcode == 0) {
+            halted = true;
+            return;
+        }
+        if ((opcode >= 1 && opcode <= 7) || opcode == 11) {
+            alu.doInstruction();
+
+            // Add cycle costs for ALU operations
+            if (opcode == 3) {
+                // Multiply costs 10 cycles
+                currentClockCycle += 10;
+            } else {
+                // All other ALU ops (add, and, or, xor, shift, subtract, compare) cost 2 cycles
+                currentClockCycle += 2;
+            }
+        }
+    }
+
+    private void printReg() {
+        for (int i = 0; i < 32; i++) {
+            var line = "r" + i + ":" + registers[i].toString();
+            output.add(line);
+            System.out.println(line);
+        }
+    }
+
+    private void printMem() {
+        for (int i = 0; i < 1000; i++) {
+            Word32 addr = new Word32();
+            Word32 value = new Word32();
+            TestConverter.fromInt(i, addr);
+            addr.copy(mem.address);
+            mem.read();
+            mem.value.copy(value);
+            var line = i + ":" + value + "(" + TestConverter.toInt(value) + ")";
+            output.add(line);
+            System.out.println(line);
+        }
+    }
+
+    private void store() {
+        if (halted) {
+            return;
+        }
+
+        switch (opcode) {
+            case 1:
+            case 2:
+            case 3:
+            case 4:
+            case 5:
+            case 6:
+            case 7:
+                alu.result.copy(registers[DestinationRegister]);
+                break;
+
+            case 8:
+                if (immediate == 0) {
+                    printReg();
+                } else if (immediate == 1) {
+                    printMem();
+                }
+                break;
+
+            // Load: data goes through L2 cache
+            case 18:
+                setMemAddress();
+                int loadAddress = TestConverter.toInt(mem.address);
+                Word32 loadResult = new Word32();
+                currentClockCycle += l2Cache.readData(loadAddress, loadResult);
+                loadResult.copy(registers[DestinationRegister]);
+                break;
+
+            // Store: write-through via L2 cache
+            case 19:
+                setMemAddress();
+                int storeAddress = TestConverter.toInt(mem.address);
+                Word32 storeValue = new Word32();
+                if (isImmediate) {
+                    TestConverter.fromInt(immediate, storeValue);
+                } else {
+                    registers[SourceRegister].copy(storeValue);
+                }
+                currentClockCycle += l2Cache.writeData(storeAddress, storeValue);
+                break;
+
+            case 20:
+                if (isImmediate) {
+                    TestConverter.fromInt(immediate, registers[DestinationRegister]);
+                } else {
+                    registers[SourceRegister].copy(registers[DestinationRegister]);
+                }
+                break;
+
+            case 9:
+                Word32 returnAddress = new Word32();
+                PC.copy(returnAddress);
+                callStack.push(returnAddress);
+                jumpWordRelative(immediate);
+                break;
+
+            case 10:
+                if (!callStack.isEmpty()) {
+                    callStack.pop().copy(PC);
+                }
+                break;
+
+            case 12:
+            case 13:
+            case 14:
+            case 15:
+            case 16:
+            case 17:
+                if (shouldBranch()) {
+                    jumpWordRelative(immediate);
+                }
+                break;
+        }
+    }
+
+    private void setMemAddress() {
+        if (isImmediate) {
+            if (opcode == 19) {
+                registers[DestinationRegister].copy(mem.address);
+            } else {
+                Word32 immeDiate = new Word32();
+                TestConverter.fromInt(immediate, immeDiate);
+                Adder.add(immeDiate, registers[DestinationRegister], mem.address);
+            }
+        } else {
+            registers[DestinationRegister].copy(mem.address);
+        }
+    }
+
+    private boolean shouldBranch() {
+        boolean less = alu.less.getValue();
+        boolean equal = alu.equal.getValue();
+
+        switch (opcode) {
+            case 12: return less || equal;
+            case 13: return less;
+            case 14: return !less;
+            case 15: return !less && !equal;
+            case 16: return equal;
+            case 17: return !equal;
+            default: return false;
+        }
+    }
+
+    private void jumpWordRelative(int immediate) {
+        int fetchedInstruction = TestConverter.toInt(PC) - 1;
+        int currentWord = fetchedInstruction / 2;
+        int targetWord = currentWord + immediate;
+        int targetInstruction = targetWord * 2;
+        int offset = targetInstruction - TestConverter.toInt(PC);
+        updatePC(offset);
+    }
+
+    private void updatePC(int offset) {
+        Word32 offsetWord = new Word32();
+        TestConverter.fromInt(offset, offsetWord);
+        Word32 nextPC = new Word32();
+        Adder.add(PC, offsetWord, nextPC);
+        nextPC.copy(PC);
+    }
+}
