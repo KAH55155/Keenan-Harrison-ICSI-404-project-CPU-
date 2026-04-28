@@ -1,0 +1,58 @@
+public class InstructionCache {
+
+    // Number of words per cache line
+    private static final int LINE_SIZE = 8;
+
+    // Cycle costs
+    private static final int HIT_CYCLES  = 10;
+    private static final int MISS_CYCLES = 350;
+
+    // The single cache line
+    private Word32[] line = new Word32[LINE_SIZE];
+    private int tag = -1; // word-address of line[0]; -1 = invalid
+
+    // Reference to L2 so misses can be filled from there
+    private L2Cache l2;
+
+    public InstructionCache(L2Cache l2) {
+        this.l2 = l2;
+        for (int i = 0; i < LINE_SIZE; i++) {
+            line[i] = new Word32();
+        }
+    }
+
+    /**
+     * Read the Word32 at word-address {@code wordAddress} into {@code result}.
+     *
+     * @return the number of clock cycles consumed by this access
+     */
+    public int read(int wordAddress, Word32 result) {
+        // Check if wordAddress falls within the current cache line
+        if (tag != -1 && wordAddress >= tag && wordAddress < tag + LINE_SIZE) {
+            // Cache hit
+            line[wordAddress - tag].copy(result);
+            return HIT_CYCLES;
+        }
+
+        // Cache miss – align to a LINE_SIZE boundary and fill from L2
+        int newTag = (wordAddress / LINE_SIZE) * LINE_SIZE;
+        fill(newTag);
+        line[wordAddress - tag].copy(result);
+        return MISS_CYCLES;
+    }
+
+    /**
+     * Fill the cache line starting at word-address {@code startAddress}
+     * by reading 8 consecutive words from L2.
+     * The L2 cycle cost is absorbed here (not returned to the processor)
+     * because the 350-cycle miss cost already accounts for it.
+     */
+    private void fill(int startAddress) {
+        tag = startAddress;
+        for (int i = 0; i < LINE_SIZE; i++) {
+            // We discard the L2 cycle cost here because the Processor already
+            // pays the flat 350-cycle miss penalty which covers the L2 fill.
+            l2.readInstruction(startAddress + i, line[i]);
+        }
+    }
+}
