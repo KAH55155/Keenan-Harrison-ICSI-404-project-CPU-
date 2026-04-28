@@ -1,0 +1,132 @@
+; Program 1: Sum integers 1 to 100 using a loop
+; Uses only registers - no memory access
+;
+; r0 = accumulator (sum)
+; r1 = loop counter (starts at 1, goes to 100)
+; r2 = constant 100 (loop limit)
+; r3 = constant 1  (increment)
+
+copy 0 r0          ; r0 = 0  (sum)
+copy 1 r1          ; r1 = 1  (counter)
+copy 100 r2        ; r2 = 100 (limit)
+copy 1 r3          ; r3 = 1  (step)
+
+; loop:
+add r1 r0          ; r0 = r0 + r1
+add r3 r1          ; r1 = r1 + 1
+compare r2 r1      ; compare limit to counter
+bge -2             ; if r2 >= r1, go back to add r1 r0
+
+syscall 0          ; print registers (r0 holds the answer: 5050)
+halt
+
+
+; Program 2: Store integers 1-100 in memory, then sum them
+;
+; Layout:
+;   Memory addresses 200-299 hold integers 1 through 100
+;
+; Phase 1 – fill the array
+;   r0 = value to store (1..100)
+;   r1 = memory address (200..299)
+;   r2 = constant 1
+;   r3 = end address sentinel (300)
+;
+; Phase 2 – sum the array
+;   r4 = accumulator
+;   r1 = current address (reset to 200)
+
+; --- Phase 1: fill array ---
+copy 1 r0          ; r0 = 1   (value)
+copy 200 r1        ; r1 = 200 (address)
+copy 1 r2          ; r2 = 1
+copy 300 r3        ; r3 = 300 (end sentinel)
+
+; fill_loop:
+store r0 r1        ; mem[r1] = r0
+add r2 r0          ; r0++
+add r2 r1          ; r1++
+compare r3 r1      ; compare 300 to r1
+bgt -3             ; if 300 > r1, keep filling
+
+; --- Phase 2: sum array ---
+copy 0 r4          ; r4 = 0   (accumulator)
+copy 200 r1        ; r1 = 200 (reset address)
+
+; sum_loop:
+load r1 r5         ; r5 = mem[r1]
+add r5 r4          ; r4 = r4 + r5
+add r2 r1          ; r1++
+compare r3 r1      ; compare 300 to r1
+bgt -3             ; if 300 > r1, keep summing
+
+syscall 0          ; print registers (r4 holds the answer: 5050)
+halt
+
+; Program 3: Build a linked list of 100 nodes in memory, then traverse and sum
+;
+; Each node occupies 2 consecutive words:
+;   [addr + 0] = integer value
+;   [addr + 1] = address of next node (0 means end of list)
+;
+; Node 0  starts at address 200  (value=1,  next=202)
+; Node 1  starts at address 202  (value=2,  next=204)
+; ...
+; Node 99 starts at address 398  (value=100, next=0)
+;
+; Build registers:
+;   r0 = current node address
+;   r1 = current value (1..100)
+;   r2 = next node address (r0 + 2)
+;   r3 = constant 1
+;   r4 = constant 2
+;   r5 = address of "next" slot (r0 + 1)
+;   r6 = constant 100
+;   r7 = constant 0
+;
+; Traverse registers:
+;   r8  = current node pointer
+;   r9  = accumulator
+;   r10 = temp (loaded value or next pointer)
+
+; ---- setup constants ----
+copy 1 r3          ; r3 = 1
+copy 2 r4          ; r4 = 2
+copy 100 r6        ; r6 = 100
+copy 0 r7          ; r7 = 0
+
+; ---- Phase 1: build the list ----
+copy 200 r0        ; r0 = address of current node
+copy 1 r1          ; r1 = value = 1
+
+; build_loop:
+store r1 r0        ; mem[r0] = value
+copy r0 r5         ; r5 = r0
+add r3 r5          ; r5 = r0 + 1  (address of next-pointer slot)
+copy r0 r2         ; r2 = r0
+add r4 r2          ; r2 = r0 + 2  (address of next node)
+compare r6 r1      ; compare 100 to r1
+beq 2              ; if value == 100, jump to write_null
+store r2 r5        ; mem[r0+1] = next node address
+add r4 r0          ; r0 += 2  (advance to next node)
+add r3 r1          ; r1++     (increment value)
+bgt -8             ; loop back to build_loop
+
+; write_null: last node next pointer = 0
+store r7 r5        ; mem[r0+1] = 0
+
+; ---- Phase 2: traverse and sum ----
+copy 200 r8        ; r8 = head (address 200)
+copy 0 r9          ; r9 = accumulator
+
+; traverse_loop:
+load r8 r10        ; r10 = node value
+add r10 r9         ; r9  += r10
+copy r8 r10        ; r10 = current node address
+add r3 r10         ; r10 = address of next pointer
+load r10 r8        ; r8  = next node address
+compare r7 r8      ; compare 0 to r8
+bne -5             ; if r8 != 0, keep traversing
+
+syscall 0          ; print registers  (r9 should be 5050)
+halt
