@@ -1,0 +1,134 @@
+public class L2Cache {
+
+    private static final int LINE_SIZE   = 8;
+    private static final int NUM_LINES   = 4;
+
+    // Data-access cycle costs
+    private static final int DATA_HIT_CYCLES  = 20;
+    private static final int DATA_MISS_CYCLES = 360;
+
+    // One tag per line; -1 means the slot is empty
+    private int[]     tags  = new int[NUM_LINES];
+    private Word32[][] data  = new Word32[NUM_LINES][LINE_SIZE];
+
+    // Round-robin eviction pointer
+    private int nextEvict = 0;
+
+    private Memory mem;
+
+    public L2Cache(Memory mem) {
+        this.mem = mem;
+        for (int i = 0; i < NUM_LINES; i++) {
+            tags[i] = -1;
+            for (int j = 0; j < LINE_SIZE; j++) {
+                data[i][j] = new Word32();
+            }
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Instruction path (called by InstructionCache during a fill)
+    // No cycle cost returned – the L1 miss penalty already covers this.
+    // ------------------------------------------------------------------
+
+    /**
+     * Read one word for an instruction fetch into {@code result}.
+     * Fills from main memory if not present in L2.
+     */
+    public void readInstruction(int wordAddress, Word32 result) {
+        int lineIndex = findLine(wordAddress);
+        if (lineIndex == -1) {
+            // Not in L2 – fill from main memory (no extra cycle charge here)
+            lineIndex = fillFromMemory(wordAddress);
+        }
+        data[lineIndex][wordAddress - tags[lineIndex]].copy(result);
+    }
+
+    // ------------------------------------------------------------------
+    // Data path (called by Processor for load/store)
+    // Returns the number of clock cycles consumed.
+    // ------------------------------------------------------------------
+
+    /**
+     * Load one word from the data path.
+     *
+     * @return cycles consumed (20 hit, 360 miss)
+     */
+    public int readData(int wordAddress, Word32 result) {
+        int lineIndex = findLine(wordAddress);
+        if (lineIndex != -1) {
+            // L2 hit
+            data[lineIndex][wordAddress - tags[lineIndex]].copy(result);
+            return DATA_HIT_CYCLES;
+        }
+        // L2 miss – fill from memory then return
+        lineIndex = fillFromMemory(wordAddress);
+        data[lineIndex][wordAddress - tags[lineIndex]].copy(result);
+        return DATA_MISS_CYCLES;
+    }
+
+    /**
+     * Store one word via write-through: updates L2 if present, always
+     * writes through to main memory.
+     *
+     * @return cycles consumed (20 hit, 360 miss)
+     */
+    public int writeData(int wordAddress, Word32 value) {
+        int lineIndex = findLine(wordAddress);
+        int cycles;
+
+        if (lineIndex != -1) {
+            // L2 hit – update the cached copy
+            value.copy(data[lineIndex][wordAddress - tags[lineIndex]]);
+            cycles = DATA_HIT_CYCLES;
+        } else {
+            // L2 miss – write-through directly to memory without allocating
+            cycles = DATA_MISS_CYCLES;
+        }
+
+        // Write-through: always update main memory
+        TestConverter.fromInt(wordAddress, mem.address);
+        value.copy(mem.value);
+        mem.write();
+
+        return cycles;
+    }
+
+    // ------------------------------------------------------------------
+    // Internal helpers
+    // ------------------------------------------------------------------
+
+    /**
+     * Return the line index that contains {@code wordAddress}, or -1 if
+     * the address is not currently cached.
+     */
+    private int findLine(int wordAddress) {
+        for (int i = 0; i < NUM_LINES; i++) {
+            if (tags[i] != -1
+                    && wordAddress >= tags[i]
+                    && wordAddress < tags[i] + LINE_SIZE) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    /**
+     * Evict the next slot (round-robin), fill it with 8 words from main
+     * memory starting at the aligned base of {@code wordAddress}, and
+     * return the slot index.
+     */
+    private int fillFromMemory(int wordAddress) {
+        int slot    = nextEvict;
+        nextEvict   = (nextEvict + 1) % NUM_LINES;
+        int baseAddr = (wordAddress / LINE_SIZE) * LINE_SIZE;
+        tags[slot]  = baseAddr;
+
+        for (int i = 0; i < LINE_SIZE; i++) {
+            TestConverter.fromInt(baseAddr + i, mem.address);
+            mem.read();
+            mem.value.copy(data[slot][i]);
+        }
+        return slot;
+    }
+}
