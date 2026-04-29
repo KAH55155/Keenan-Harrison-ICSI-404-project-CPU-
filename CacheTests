@@ -36,7 +36,7 @@ public class CacheTest {
                 "add r1 r0",        //  6: r0 += r1
                 "add r3 r1",        //  7: r1++
                 "compare r2 r1",    //  8: flags: r1 - r2
-                "blt -1",           //  9: if r1 < r2 -> word3 (instr6) ✓
+                "ble -1",           //  9: if r1 <= r2 -> word3 (instr6) ✓
                 "syscall 0",        // 10
                 "halt"              // 11
         };
